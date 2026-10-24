@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Matinee</title>
+<style>
+html,body{margin:0;background:#0b1220;color:#eef2fa;font:22px/1.4 Arial,Helvetica,sans-serif}
+#bar{padding:22px 40px}
+#bar *{vertical-align:middle}
+#logo{font-size:32px;font-weight:bold;margin-right:32px;color:#8ab4ff}
+input,button{font:inherit;color:#eef2fa;background:#17223a;border:4px solid #17223a;border-radius:32px;padding:8px 24px;margin:0 12px 0 0}
+input{width:380px}
+button.p{background:#8ab4ff;border-color:#8ab4ff;color:#0b1220;font-weight:bold}
+input:focus,button:focus,.t:focus{border-color:#fff;outline:none}
+.t:focus{background:#24304a}
+#msg{padding:12px 40px;color:#93a4c0}
+#msg:empty{padding:0}
+#main,#res{padding:0 40px}
+#res{display:none}
+.hero{position:relative;height:380px;margin:8px 0 0;border-radius:24px;overflow:hidden;background:#17223a}
+.hero img{display:block;width:100%;height:380px;object-fit:cover;object-position:50% 30%}
+.hg{position:absolute;left:0;top:0;right:0;bottom:0;background:linear-gradient(to right,#0b1220 28%,rgba(11,18,32,0) 85%)}
+.ht{position:absolute;left:44px;bottom:36px;width:640px}
+.ht h1{font-size:44px;margin:0 0 8px}
+.ht p{margin:0 0 20px;font-size:20px;color:#c8d2e6;max-height:84px;overflow:hidden}
+.rt{font-size:28px;font-weight:bold;margin:26px 0 12px}
+.strip{white-space:nowrap;overflow:hidden}
+.t{position:relative;display:inline-block;vertical-align:top;width:150px;margin-right:16px;border:4px solid transparent;border-radius:18px;background:#17223a;overflow:hidden;white-space:normal}
+.t img,.np{display:block;width:150px;height:225px}
+.np{padding:10px;overflow:hidden;background:#223052;box-sizing:border-box;font-size:18px}
+.rb{position:absolute;left:8px;top:8px;padding:0 10px;border-radius:12px;background:#0b1220;font-size:16px;font-weight:bold}
+.n{display:block;padding:6px 8px;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov{display:none;position:fixed;left:0;top:0;right:0;bottom:0;overflow:auto;background:#0b1220;padding:40px 60px}
+.ov h1{font-size:44px;margin:0 0 6px}
+.ov h2{font-size:28px;margin:28px 0 8px;color:#8ab4ff}
+.ov p{max-width:1000px;margin:8px 0}
+.m,.s{color:#93a4c0}
+.s{font-size:16px}
+#det button{margin:24px 12px 0 0}
+#vid{padding:0;background:#000}
+#vid p{margin:0;padding:12px 24px;font-size:18px;color:#93a4c0}
+#vid video{display:block;width:100%;height:90%;background:#000}
+#foot{margin:0;padding:30px 40px;font-size:16px;color:#93a4c0}
+</style>
+</head>
+<body>
+<div id="bar"><span id="logo">Matinee</span><input id="q" type="text" placeholder="Search movies and shows"><button id="go" class="p" type="button">Search</button><button id="bh" type="button">Home</button></div>
+<div id="msg"></div>
+<div id="main"></div>
+<div id="res"></div>
+<p id="foot">This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability data by JustWatch.</p>
+<div id="det" class="ov"></div>
+<div id="vid" class="ov"></div>
+<script>
+// 1) Paste your TMDB "API Key" below.  2) Upload this file to Netlify or GitHub Pages.
+var KEY = "PASTE_TMDB_KEY_HERE";
+var REGION = "IN"; // country used for "Where to watch" (IN, US, GB ...)
+// Legal films that play inside this page (Blender open movies, CC-BY). Add your own legal MP4 links here.
+var FREE = [
+  {title: "Big Buck Bunny", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"},
+  {title: "Sintel", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4"},
+  {title: "Tears of Steel", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4"}
+];
+var ROWS = [
+  ["Trending this week", "/trending/all/week", ""],
+  ["Popular movies", "/movie/popular", "movie"],
+  ["Popular shows", "/tv/popular", "tv"]
+];
+var API = "https://api.themoviedb.org/3";
+var IMG = "https://image.tmdb.org/t/p/w185";
+
+function $(id) { return document.getElementById(id); }
+var q = $("q"), go = $("go"), bh = $("bh"), msg = $("msg"), main = $("main"), res = $("res"), det = $("det"), vid = $("vid");
+var bar = [q, go, bh], gridHome = [bar], gridRes = [bar], grid = gridHome, mode = "main", last = null;
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function mk(tag, cls, txt) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt) e.textContent = txt;
+  return e;
+}
+function setMsg(t) { msg.textContent = t; }
+
+function get(path, cb) {
+  var x = new XMLHttpRequest();
+  x.open("GET", API + path + (path.indexOf("?") > -1 ? "&" : "?") + "api_key=" + KEY, true);
+  x.onreadystatechange = function () {
+    if (x.readyState !== 4) return;
+    var d = null;
+    if (x.status === 200) { try { d = JSON.parse(x.responseText); } catch (e) {} }
+    cb(d, x.status);
+  };
+  x.send();
+}
+
+function clean(d, n) {
+  var a = (d && d.results) || [], o = [], i;
+  for (i = 0; i < a.length && o.length < n; i++) if (a[i].media_type !== "person") o.push(a[i]);
+  return o;
+}
+
+function tile(it, type, free) {
+  var t = mk("div", "t"), name = free ? it.title : (it.title || it.name || ""), im;
+  t.tabIndex = 0;
+  if (!free && it.poster_path) {
+    im = mk("img");
+    im.src = IMG + it.poster_path;
+    im.alt = "";
+    im.setAttribute("loading", "lazy");
+    t.appendChild(im);
+  } else {
+    t.appendChild(mk("div", "np", name));
+  }
+  if (!free && it.vote_average) t.appendChild(mk("span", "rb", it.vote_average.toFixed(1)));
+  t.appendChild(mk("span", "n", name));
+  t.onclick = function () {
+    if (free) playFree(it); else openDet(it.id, it.media_type || type);
+  };
+  return t;
+}
+
+function addRow(box, g, title, items, type, free) {
+  var row, strip, els = [], i;
+  if (!items.length) return;
+  row = mk("div", "row");
+  if (title) row.appendChild(mk("div", "rt", title));
+  strip = mk("div", "strip");
+  for (i = 0; i < items.length; i++) els.push(strip.appendChild(tile(items[i], type, free)));
+  row.appendChild(strip);
+  box.appendChild(row);
+  g.push(els);
+}
+
+// Rows load one after another so the TV never decodes everything at once.
+function loadRow(i) {
+  if (i >= ROWS.length) { addRow(main, gridHome, "Free to watch", FREE, "", true); return; }
+  get(ROWS[i][1], function (d, st) {
+    if (!d) {
+      setMsg(st === 401 ? "TMDB rejected the key. Check the KEY line at the top of this file." : "Could not load. Check the internet connection, then reload the page.");
+      loadRow(ROWS.length);
+      return;
+    }
+    var list = clean(d, 10);
+    addRow(main, gridHome, ROWS[i][0], list, ROWS[i][2], false);
+    if (i === 0) addHero(list);
+    if (i === 0 && grid === gridHome) focusAt(1, 0);
+    loadRow(i + 1);
+  });
+}
+
+// One featured banner (a single image) above the first row.
+function addHero(list) {
+  var it = null, i, h, im, t, b;
+  for (i = 0; i < list.length; i++) if (list[i].backdrop_path) { it = list[i]; break; }
+  if (!it) return;
+  h = mk("div", "hero");
+  im = mk("img");
+  im.src = "https://image.tmdb.org/t/p/w1280" + it.backdrop_path;
+  im.alt = "";
+  h.appendChild(im);
+  h.appendChild(mk("div", "hg"));
+  t = mk("div", "ht");
+  t.appendChild(mk("h1", "", it.title || it.name || ""));
+  t.appendChild(mk("p", "", it.overview || ""));
+  b = mk("button", "p", "Details");
+  b.type = "button";
+  b.onclick = function () { openDet(it.id, it.media_type || "movie"); };
+  t.appendChild(b);
+  h.appendChild(t);
+  main.insertBefore(h, main.firstChild);
+  gridHome.splice(1, 0, [b]);
+}
+
+function focusAt(r, c) {
+  if (r < 0) r = 0;
+  if (r >= grid.length) r = grid.length - 1;
+  if (c < 0) c = 0;
+  if (c >= grid[r].length) c = grid[r].length - 1;
+  grid[r][c].focus();
+}
+function where() {
+  var a = document.activeElement, r, c;
+  for (r = 0; r < grid.length; r++) for (c = 0; c < grid[r].length; c++) if (grid[r][c] === a) return [r, c];
+  return [0, 0];
+}
+
+// Search runs only when you press OK / Enter, never on every key.
+function search() {
+  var s = q.value.replace(/^\s+|\s+$/g, "");
+  if (!s) return;
+  setMsg("Searching...");
+  get("/search/multi?include_adult=false&query=" + encodeURIComponent(s), function (d) {
+    var list = clean(d, 18), i;
+    res.innerHTML = "";
+    gridRes = [bar];
+    for (i = 0; i < list.length; i += 6) addRow(res, gridRes, i ? "" : "Results for " + s, list.slice(i, i + 6), "", false);
+    setMsg(list.length ? "" : (d ? "No results for " + s + ". Try another title." : "Search failed. Check the internet connection and try again."));
+    main.style.display = "none";
+    res.style.display = "block";
+    grid = gridRes;
+    focusAt(list.length ? 1 : 0, 0);
+  });
+}
+function showHome() {
+  res.style.display = "none";
+  main.style.display = "block";
+  grid = gridHome;
+  setMsg("");
+  focusAt(gridHome.length > 1 ? 1 : 0, 0);
+}
+
+function provHtml(d) {
+  var r = d["watch/providers"] && d["watch/providers"].results && d["watch/providers"].results[REGION];
+  var T = [["free", "Free"], ["ads", "Free with ads"], ["flatrate", "Subscription"], ["rent", "Rent"], ["buy", "Buy"]];
+  var out = "", i, j, L, n;
+  if (r) for (i = 0; i < T.length; i++) {
+    L = r[T[i][0]];
+    if (L && L.length) {
+      n = [];
+      for (j = 0; j < L.length; j++) n.push(L[j].provider_name);
+      out += "<p><b>" + T[i][1] + ":</b> " + esc(n.join(", ")) + "</p>";
+    }
+  }
+  return (out || "<p>No streaming info for " + esc(REGION) + " yet.</p>") + "<p class=\"s\">Availability data by JustWatch</p>";
+}
+
+function renderDet(d) {
+  var name = d.title || d.name || "", date = d.release_date || d.first_air_date || "", m = [], tk = "";
+  var v = (d.videos && d.videos.results) || [], i, bs;
+  if (date) m.push(date.slice(0, 4));
+  if (d.vote_average) m.push(d.vote_average.toFixed(1) + "/10");
+  if (d.runtime) m.push(Math.floor(d.runtime / 60) + "h " + (d.runtime % 60) + "m");
+  if (d.number_of_seasons) m.push(d.number_of_seasons + (d.number_of_seasons > 1 ? " seasons" : " season"));
+  for (i = 0; i < v.length; i++) if (v[i].site === "YouTube" && v[i].type === "Trailer") { tk = v[i].key; break; }
+  det.innerHTML = "<h1>" + esc(name) + "</h1><p class=\"m\">" + esc(m.join(", ")) + "</p><p>" + esc(d.overview || "No description yet.") + "</p>" +
+    (d.fail ? "" : "<h2>Where to watch</h2>" + provHtml(d)) +
+    (tk ? "<button class=\"b p\" type=\"button\">Watch trailer</button>" : "") + "<button class=\"b\" type=\"button\">Close</button>";
+  bs = det.getElementsByClassName("b");
+  if (tk) bs[0].onclick = function () { location.href = "https://www.youtube.com/watch?v=" + tk; };
+  bs[bs.length - 1].onclick = closeDet;
+  bs[0].focus();
+}
+function openDet(id, type) {
+  last = document.activeElement;
+  mode = "det";
+  det.innerHTML = "<p>Loading...</p>";
+  det.style.display = "block";
+  get("/" + type + "/" + id + "?append_to_response=videos,watch/providers", function (d) {
+    if (mode !== "det") return;
+    renderDet(d || {title: "Could not load details", overview: "Check the internet connection and try again.", fail: true});
+  });
+}
+function closeDet() {
+  det.style.display = "none";
+  det.innerHTML = "";
+  mode = "main";
+  if (last) last.focus();
+}
+
+function playFree(f) {
+  last = document.activeElement;
+  mode = "vid";
+  vid.innerHTML = "<p>" + esc(f.title) + " (press Back to close)</p><video id=\"v\" controls autoplay src=\"" + esc(f.url) + "\"></video>";
+  vid.style.display = "block";
+}
+function closeVid() {
+  var v = $("v");
+  if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
+  vid.innerHTML = "";
+  vid.style.display = "none";
+  mode = "main";
+  if (last) last.focus();
+}
+function vidKey(k, e) {
+  var v = $("v");
+  if (k === 461 || k === 27 || k === 8 || k === 413) { e.preventDefault(); closeVid(); }
+  else if (k === 13 || k === 415 || k === 19) { e.preventDefault(); if (v) { if (v.paused) v.play(); else v.pause(); } }
+  else if (k === 37 || k === 412) { e.preventDefault(); if (v) v.currentTime -= 10; }
+  else if (k === 39 || k === 417) { e.preventDefault(); if (v) v.currentTime += 10; }
+}
+function detKey(k, e) {
+  var bs = det.getElementsByClassName("b"), i = 0;
+  if (k === 461 || k === 27 || k === 8) { e.preventDefault(); closeDet(); return; }
+  while (i < bs.length && bs[i] !== document.activeElement) i++;
+  if (k === 13) { if (bs[i]) { e.preventDefault(); bs[i].onclick(); } }
+  else if (k === 37 || k === 38) { e.preventDefault(); if (bs[i - 1]) bs[i - 1].focus(); }
+  else if (k === 39 || k === 40) { e.preventDefault(); if (bs[i + 1]) bs[i + 1].focus(); }
+}
+
+// Remote control: arrows move, OK opens, Back goes back (LG Back = 461).
+document.onkeydown = function (e) {
+  var k = e.keyCode, a = document.activeElement, p, dr = 0, dc = 0;
+  if (mode === "vid") return vidKey(k, e);
+  if (mode === "det") return detKey(k, e);
+  if (k === 13) {
+    if (a === q) { if (q.value.replace(/\s/g, "")) { e.preventDefault(); search(); } }
+    else if (a && a.onclick) { e.preventDefault(); a.onclick(); }
+    return;
+  }
+  if (k === 461 || k === 27) { if (grid === gridRes) { e.preventDefault(); showHome(); } return; }
+  if (k === 37) dc = -1; else if (k === 39) dc = 1; else if (k === 38) dr = -1; else if (k === 40) dr = 1; else return;
+  e.preventDefault();
+  p = where();
+  focusAt(p[0] + dr, p[1] + dc);
+};
+
+q.onfocus = function () { q.value = ""; };
+go.onclick = search;
+bh.onclick = showHome;
+if (!KEY || KEY.indexOf("PASTE") === 0) setMsg("Add your TMDB API key: open this file and replace PASTE_TMDB_KEY_HERE at the top.");
+else loadRow(0);
+</script>
+</body>
+</html>
